@@ -36,6 +36,32 @@ local function hasRadioPass()
 	return ok and v == true
 end
 
+-- conoce juego: MM2 = официальное радио всем, остальное (включая Driving Empire) = локально,
+-- пока ремоут их радио не изучен живьём. Проверка идёт по наличию ремоута, а не по названию игры.
+local KNOWN_GAMES = {
+	[66654135] = "Murder Mystery 2",
+	[1202096104] = "Driving Empire",
+}
+local function currentGameName(): string?
+	local id = 0
+	pcall(function()
+		id = game.GameId
+	end)
+	return KNOWN_GAMES[id]
+end
+
+local function radioMode(): string
+	if hasRadioPass() then
+		local ok, remote = pcall(function()
+			return game.ReplicatedStorage.Remotes.Inventory.PlaySong
+		end)
+		if ok and remote ~= nil then
+			return "mm2"
+		end
+	end
+	return "local"
+end
+
 local function getRadioSound()
 	local char = workspace:FindFirstChild(LocalPlayer.Name)
 	if not char then return nil end
@@ -113,6 +139,7 @@ local toggleFav -- прямое объявление: назначается п�
 local lyItems -- очередь каталога (объявлена ниже)
 local favWin -- окно избранного (создаётся ниже)
 local refreshFavWin -- прямое объявление: назначается вместе с окном
+local favOrder: {{ code: string, title: string }} = {} -- текущий список избранного для очереди
 
 local function saveFav()
 	local nameOf: { [string]: string } = {}
@@ -272,7 +299,7 @@ end
 local function applyVolume()
 	local rs = getRadioSound()
 	if rs then
-		if maxVol and hasRadioPass() then
+		if maxVol and radioMode() == "mm2" then
 			applyMaxVolume(rs)
 		else
 			pcall(function() rs.Volume = volume end)
@@ -312,7 +339,7 @@ local function waitRadioState(timeoutSec: number, fn): boolean
 end
 
 local function stopTrack(): string
-	if hasRadioPass() then
+	if radioMode() == "mm2" then
 		-- сервер тогглит трек ТОЛЬКО если прислать тот ID, что сейчас загружен,
 		-- поэтому берём фактический SoundId, а не запомненный (он мог рассинхрониться).
 		-- miniPaused тоже ведёт на сервер: локальная пауза не останавливает трек у других.
@@ -351,7 +378,7 @@ local function playTrack(code: string, knownName: string?): string
 	local url = toRadioUrl(code)
 	miniPaused = false
 	if miniPauseBtn then miniPauseBtn.Text = "II" end
-	if hasRadioPass() then
+	if radioMode() == "mm2" then
 		-- ОДИН фаер без «стоп прошлого»: сервер рассылает (звук, ID),
 		-- а клиент сам переключается на новый ID. Двойные фаеры подряд
 		-- иногда приходили вперемешку и включали не тот трек — так было раньше.
@@ -569,7 +596,14 @@ modeLabel.Font = Enum.Font.Gotham
 modeLabel.TextSize = 11
 modeLabel.TextXAlignment = Enum.TextXAlignment.Left
 modeLabel.TextColor3 = Color3.fromRGB(196, 164, 255)
-modeLabel.Text = if hasRadioPass() then "Радио — слышат все" else "Локально — слышишь только ты"
+local __gameName = currentGameName()
+if radioMode() == "mm2" then
+	modeLabel.Text = "Радио — слышат все"
+elseif __gameName then
+	modeLabel.Text = __gameName .. " — локально (радио игры изучается)"
+else
+	modeLabel.Text = "Локально — слышишь только ты"
+end
 modeLabel.Parent = main
 
 -- строка мини-режима: видна вместо modeLabel, когда окно свернуто
@@ -1110,7 +1144,7 @@ lyTop.BackgroundTransparency = 1
 lyTop.Parent = lyWin
 
 local lyTitle = Instance.new("TextLabel")
-lyTitle.Size = UDim2.new(1, -44, 1, 0)
+lyTitle.Size = UDim2.new(1, -110, 1, 0)
 lyTitle.Position = UDim2.new(0, 12, 0, 0)
 lyTitle.BackgroundTransparency = 1
 lyTitle.Font = Enum.Font.GothamBold
@@ -1133,6 +1167,21 @@ lyClose.Parent = lyTop
 local lyCloseC = Instance.new("UICorner")
 lyCloseC.CornerRadius = UDim.new(0, 7)
 lyCloseC.Parent = lyClose
+
+local lyRandom = Instance.new("TextButton")
+lyRandom.Size = UDim2.new(0, 62, 0, 22)
+lyRandom.Position = UDim2.new(1, -100, 0, 5)
+lyRandom.BackgroundColor3 = Color3.fromRGB(70, 50, 120)
+lyRandom.BackgroundTransparency = 0
+lyRandom.BorderSizePixel = 0
+lyRandom.Font = Enum.Font.GothamBold
+lyRandom.TextSize = 11
+lyRandom.TextColor3 = Color3.fromRGB(230, 235, 255)
+lyRandom.Text = "Рандом"
+lyRandom.Parent = lyTop
+local lyRandomC = Instance.new("UICorner")
+lyRandomC.CornerRadius = UDim.new(0, 7)
+lyRandomC.Parent = lyRandom
 
 local lySearch = Instance.new("TextBox")
 lySearch.Size = UDim2.new(1, -96, 0, 28)
@@ -1409,6 +1458,34 @@ end
 lyClose.MouseButton1Click:Connect(function()
 	lyWin.Visible = false
 end)
+-- рандомный трек из текущего списка (сборник с учётом поиска, каталог — страница)
+lyRandom.MouseButton1Click:Connect(function()
+	local pool: {{ code: string, title: string }} = {}
+	if lyMode == "mine" then
+		for _, m in ipairs(lyMineView) do
+			local c = normalizeCode(tostring(m.roblox_id or ""))
+			if c then
+				table.insert(pool, { code = c, title = tostring(m.title or c) })
+			end
+		end
+	else
+		for _, it in ipairs(lyItems) do
+			table.insert(pool, { code = it.code, title = it.title })
+		end
+	end
+	if #pool == 0 then
+		status.Text = "Список пуст"
+		return
+	end
+	local idx = math.random(1, #pool)
+	local item = pool[idx]
+	playCtx = { list = pool, index = idx }
+	status.Text = "Включаю..."
+	task.spawn(function()
+		status.Text = playTrack(item.code, item.title)
+		refreshHistory()
+	end)
+end)
 lyFind.MouseButton1Click:Connect(function()
 	if lyMode == "mine" then
 		lyMineQuery = lySearch.Text or ""
@@ -1545,6 +1622,7 @@ function refreshFavWin()
 		table.insert(order, { code = id, title = nameOf[id] or id })
 	end
 	table.sort(order, function(a, b) return a.title < b.title end)
+	favOrder = order
 	for i, e in ipairs(order) do
 		local row = Instance.new("Frame")
 		row.Size = UDim2.new(1, -6, 0, 26)
@@ -1571,6 +1649,14 @@ function refreshFavWin()
 		btn.MouseButton1Click:Connect(function()
 			status.Text = "Включаю..."
 			task.spawn(function()
+				-- очередь = избранное (листание остаётся внутри вкладки)
+				local snap: {{ code: string, title: string }} = {}
+				local at = 1
+				for j, it in ipairs(favOrder) do
+					table.insert(snap, { code = it.code, title = it.title })
+					if it.code == code then at = j end
+				end
+				playCtx = { list = snap, index = at }
 				status.Text = playTrack(code, nm)
 				refreshHistory()
 				refreshFavWin()
@@ -1690,7 +1776,7 @@ end
 -- ---------- wiring ----------
 -- режимы окна каталога: общий lylib.fun или мой сборник с гитхаба
 lyMode = "lylib"
-local MINE_URL = "https://raw.githubusercontent.com/Boja1586/glassradio-tracks/main/tracks.json"
+local MINE_URL = "https://raw.githubusercontent.com/Boja1586/glassradio-tracks/main/AllTracks.json"
 local function setLyMode(mode: string)
 	lyMode = mode
 	local mine = mode == "mine"
@@ -1874,6 +1960,14 @@ playBtn.MouseButton1Click:Connect(function()
 		local msg = playTrack(code, nil)
 		status.Text = msg
 		playBtn.Text = "Играть"
+		-- после ручного ввода очередь = недавние
+		local snap: {{ code: string, title: string }} = {}
+		local at = 1
+		for j, h in ipairs(history) do
+			table.insert(snap, { code = h.id, title = h.name })
+			if h.id == code then at = j end
+		end
+		playCtx = { list = snap, index = at }
 		refreshHistory()
 	end)
 end)
@@ -2145,6 +2239,11 @@ hideBtn.MouseButton1Click:Connect(function()
 	miniPrev.Visible = collapsed
 	miniNext.Visible = collapsed
 	miniPauseBtn.Visible = collapsed
+	if collapsed then
+		-- сворачиваем и все остальные окна
+		lyWin.Visible = false
+		favWin.Visible = false
+	end
 	main.Size = if collapsed then UDim2.new(0, 272, 0, 50) else UDim2.new(0, 272, 0, 368)
 	hideBtn.Text = if collapsed then "+" else "-"
 end)
@@ -2170,5 +2269,5 @@ if currentCode then
 	end
 	refreshHistory()
 else
-	status.Text = if hasRadioPass() then "Готово: включай код — услышат все" else "Готово (локальный режим)"
+	status.Text = if radioMode() == "mm2" then "Готово: включай код — услышат все" else "Готово (локальный режим)"
 end
