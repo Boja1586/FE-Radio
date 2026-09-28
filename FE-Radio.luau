@@ -599,6 +599,8 @@ modeLabel.TextColor3 = Color3.fromRGB(196, 164, 255)
 local __gameName = currentGameName()
 if radioMode() == "mm2" then
 	modeLabel.Text = "Радио — слышат все"
+elseif __gameName == "Driving Empire" then
+	modeLabel.Text = "DE: всем слышно через радио машины (R, Custom)"
 elseif __gameName then
 	modeLabel.Text = __gameName .. " — локально (радио игры изучается)"
 else
@@ -735,7 +737,7 @@ body.Parent = main
 
 -- поле ввода кода
 local input = Instance.new("TextBox")
-input.Size = UDim2.new(1, -24, 0, 30)
+input.Size = UDim2.new(1, -56, 0, 30)
 input.Position = UDim2.new(0, 12, 0, 0)
 input.BackgroundColor3 = Color3.fromRGB(20, 12, 40)
 input.BackgroundTransparency = 0
@@ -754,6 +756,22 @@ local inputS = Instance.new("UIStroke")
 inputS.Transparency = 0.7
 inputS.Color = Color3.fromRGB(255, 255, 255)
 inputS.Parent = input
+
+-- копировать код в радио игры (Driving Empire: сесть в машину, R, Custom, вставить)
+local copyBtn = Instance.new("TextButton")
+copyBtn.Size = UDim2.new(0, 40, 0, 30)
+copyBtn.Position = UDim2.new(1, -52, 0, 0)
+copyBtn.BackgroundColor3 = Color3.fromRGB(70, 50, 120)
+copyBtn.BackgroundTransparency = 0
+copyBtn.BorderSizePixel = 0
+copyBtn.Font = Enum.Font.GothamBold
+copyBtn.TextSize = 11
+copyBtn.TextColor3 = Color3.fromRGB(230, 235, 255)
+copyBtn.Text = "Copy"
+copyBtn.Parent = body
+local copyBtnC = Instance.new("UICorner")
+copyBtnC.CornerRadius = UDim.new(0, 9)
+copyBtnC.Parent = copyBtn
 
 -- кнопки play/stop
 local function glassBtn(text: string, pos: UDim2, size: UDim2): TextButton
@@ -1944,6 +1962,27 @@ end)
 -- пауза в главном окне: та же локальная пауза, рядом полная остановка
 pauseBtn.MouseButton1Click:Connect(function()
 	toggleMiniPause()
+end)
+-- скопировать код для радио игры (DE: машина, R, Custom, вставить)
+copyBtn.MouseButton1Click:Connect(function()
+	local code = currentCode or normalizeCode(input.Text or "")
+	if not code then
+		status.Text = "Нет кода для копирования"
+		return
+	end
+	local ok = false
+	pcall(function()
+		if setclipboard then
+			setclipboard(code)
+			ok = true
+		end
+	end)
+	if ok then
+		status.Text = "Код скопирован: вставь в радио машины (R)"
+	else
+		status.Text = "Код: " .. code .. " (копируй вручную)"
+		if notify then notify("Буфер недоступен, код на экране") end
+	end
 end)
 
 playBtn.MouseButton1Click:Connect(function()
